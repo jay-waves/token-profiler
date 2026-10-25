@@ -1,0 +1,4 @@
+/target/
+/bin/token-profiler
+/.token-profiler/
+/dist/

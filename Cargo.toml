@@ -1,0 +1,18 @@
+[package]
+name = "token-profiler"
+version = "0.6.1"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "Local Codex token profiler with Markdown and PNG reports"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "ab_glyph"] }
+
+[profile.release]
+lto = true
+strip = true
