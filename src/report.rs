@@ -111,7 +111,7 @@ pub fn report(dir: &Path, s: &State, es: &[Event]) -> Result<()> {
             "usage_intervals":intervals
         }),
     )?;
-    storage::atomic_write(&dir.join("report.md"), text.as_bytes())?;
+    storage::publish_report(dir, text.as_bytes())?;
     Ok(())
 }
 

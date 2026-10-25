@@ -2,3 +2,4 @@
 /bin/token-profiler
 /.token-profiler/
 /dist/
+/token-profile/

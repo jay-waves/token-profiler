@@ -55,7 +55,7 @@ Stopping freezes the capture. To start another capture after stopping, use a new
 
 ## Read the report
 
-Open `.token-profiler/<session-id>/report.md`. Its charts are in the adjacent `charts/` directory,
+Open `token-profile/latest/report.md` for the most recently updated report. The `latest` symlink points to its session directory under `.token-profiler/`. Its charts are in the adjacent `charts/` directory,
 and `data.json` contains the exported measurements. Keep the charts alongside the Markdown when sharing it.
 
 The overview shows runtime usage and collection health. Start with the tool, command, and conversation rankings to see which operations introduced the most content. Command inputs and results are shown separately, with prompt excerpts linking them to your conversation. Older captures may lack excerpts.

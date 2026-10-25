@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "token-profiler",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Local token usage profiling with Markdown reports and static PNG charts"
 }

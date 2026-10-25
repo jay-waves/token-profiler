@@ -765,3 +765,78 @@ fn empty_capture_is_actionable_without_empty_rankings_or_charts() {
     assert!(!report.contains("!["));
     assert!(!w.dir().join("charts/tools.png").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn latest_link_follows_report_updates_and_survives_moving_the_project() {
+    let mut w = Workspace::new();
+    w.cli("start");
+    let latest = w.0.join("token-profile/latest");
+    assert!(
+        fs::symlink_metadata(&latest)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(fs::read_link(&latest).unwrap().is_relative());
+    assert_eq!(
+        fs::canonicalize(&latest).unwrap(),
+        fs::canonicalize(w.dir()).unwrap()
+    );
+    w.cli("demo");
+    assert_eq!(
+        fs::read_link(&latest).unwrap(),
+        PathBuf::from("../.token-profiler/demo")
+    );
+    assert!(latest.join("charts/tools.png").is_file());
+    let linked: Value =
+        serde_json::from_slice(&fs::read(latest.join("data.json")).unwrap()).unwrap();
+    assert_eq!(linked["session"], "demo");
+    w.cli("report");
+    assert_eq!(
+        fs::canonicalize(&latest).unwrap(),
+        fs::canonicalize(w.dir()).unwrap()
+    );
+    // An interrupted publication may leave a dangling temporary link.
+    std::os::unix::fs::symlink("missing", w.0.join("token-profile/.latest.tmp")).unwrap();
+    w.cli("report");
+    assert!(!w.0.join("token-profile/.latest.tmp").try_exists().unwrap());
+    let moved = w.0.with_extension("moved");
+    fs::rename(&w.0, &moved).unwrap();
+    w.0 = moved;
+    let latest = w.0.join("token-profile/latest");
+    assert_eq!(
+        fs::canonicalize(latest.join("report.md")).unwrap(),
+        fs::canonicalize(w.dir().join("report.md")).unwrap()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn latest_link_never_overwrites_a_regular_file_or_directory() {
+    let w = Workspace::new();
+    w.cli("start");
+    let latest = w.0.join("token-profile/latest");
+    fs::remove_file(&latest).unwrap();
+    fs::write(&latest, "user content").unwrap();
+    let report = || {
+        Command::new(env!("CARGO_BIN_EXE_token-profiler"))
+            .args([
+                "--cwd",
+                w.0.to_str().unwrap(),
+                "--session",
+                "test",
+                "report",
+            ])
+            .output()
+            .unwrap()
+    };
+    let output = report();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Refusing to replace a non-symlink"));
+    assert_eq!(fs::read_to_string(&latest).unwrap(), "user content");
+    fs::remove_file(&latest).unwrap();
+    fs::create_dir(&latest).unwrap();
+    assert!(!report().status.success());
+    assert!(latest.is_dir());
+}

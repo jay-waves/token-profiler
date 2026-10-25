@@ -150,3 +150,36 @@ pub(crate) fn recover_event_tail(dir: &Path) -> Result<bool> {
     file.set_len(0)?;
     Ok(true)
 }
+
+/// Publish Markdown and the project-wide latest pointer under one short lock.
+/// A relative directory link keeps the Markdown's chart/JSON links portable.
+pub(crate) fn publish_report(dir: &Path, markdown: &[u8]) -> Result<()> {
+    let root = dir.parent().context("Missing capture root")?;
+    let project = root.parent().context("Missing project directory")?;
+    let _publish = named_lock(root, "latest.lock")?;
+    let links = project.join("token-profile");
+    fs::create_dir_all(&links)?;
+    let latest = links.join("latest");
+    let tmp = links.join(".latest.tmp");
+    for path in [&latest, &tmp] {
+        match fs::symlink_metadata(path) {
+            Ok(meta) if meta.file_type().is_symlink() => {}
+            Ok(_) => bail!("Refusing to replace a non-symlink: {}", path.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    if fs::symlink_metadata(&tmp).is_ok() {
+        fs::remove_file(&tmp)?;
+    }
+    let target = Path::new("..")
+        .join(root.file_name().context("Missing capture root name")?)
+        .join(dir.file_name().context("Missing session directory name")?);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &tmp)?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&target, &tmp)?;
+    atomic_write(&dir.join("report.md"), markdown)?;
+    fs::rename(&tmp, &latest)?;
+    Ok(())
+}
