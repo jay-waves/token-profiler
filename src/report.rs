@@ -102,7 +102,7 @@ pub fn report(dir: &Path, s: &State, es: &[Event]) -> Result<()> {
     storage::write_json(
         &dir.join("data.json"),
         &json!({
-            "schema_version":4,"breakdown":breakdown,"session":s.session,"runtime_usage":usage,
+            "schema_version":5,"breakdown":breakdown,"session":s.session,"runtime_usage":usage,
             "sources_estimated_tokens":sources,"events":serialized_events,"warnings":s.warnings,
             "pre_existing_inventory":s.inventory,
             "coverage":{"started_ms":(s.started_ms!=0).then_some(s.started_ms),"baseline_ms":s.baseline_ms,
@@ -130,32 +130,49 @@ fn label(value: &str) -> String {
     }
 }
 fn rankings(b: &Breakdown, charts: &Path) -> Result<String> {
-    let mut text = String::new();
-    if let Some(tool) = b.tools.first() {
-        text += &format!(
-            "\n**Largest tool:** {} · {} of captured content across {} calls.\n",
-            md(&tool.name),
-            share(tool.input.saturating_add(tool.result), b.total),
-            tool.calls
-        );
-    }
-    text += "\n## Tools\n\n";
-    if b.tools.is_empty() {
+    let mut text = String::from("\n## Command groups\n\n");
+    if b.categories.is_empty() {
         text += "No tool calls captured.\n";
     } else {
-        text += "| Tool | Calls | Input est. | Result est. | Total est. | Share |\n|---|---:|---:|---:|---:|---:|\n";
-        for tool in b.tools.iter().take(10) {
-            let total = tool.input.saturating_add(tool.result);
+        text += "| Commands | Calls | Input est. | Result est. |\n|---|---:|---:|---:|\n";
+        for group in b.categories.iter().take(10) {
             text += &format!(
-                "| {} | {} | {} | {} | {} | {} |\n",
-                md(&tool.name),
-                tool.calls,
-                tool.input,
-                tool.result,
-                total,
-                share(total, b.total)
+                "| {} | {} | {} | {} |\n",
+                md(&group.name),
+                group.calls,
+                group.input,
+                group.result
             );
         }
+        if b.categories.len() > 10 {
+            text += &format!(
+                "\nTop 10 of {} groups; all groups are in [data.json](data.json).\n",
+                b.categories.len()
+            );
+        }
+    }
+    text += "\n## Most expensive calls\n\n";
+    if b.calls.is_empty() {
+        text += "No tool calls captured.\n";
+    } else {
+        text += "| Command / input excerpt | Turn | Total est. |\n|---|---|---:|\n";
+        for call in b.calls.iter().take(10) {
+            let excerpt = if call.summary.is_empty() {
+                &call.tool
+            } else {
+                &call.summary
+            };
+            text += &format!(
+                "| {} | {} | {} |\n",
+                label(excerpt),
+                call.turn,
+                call.total()
+            );
+        }
+        text += "\nTop 10 by estimated input + result tokens. Missing measurements contribute no known tokens; see data.json for individual measurements.\n";
+    }
+    text += "\n<details>\n<summary>Detailed statistics: tools and conversation turns</summary>\n\n";
+    if !b.tools.is_empty() {
         chart::init()?;
         bars(
             &charts.join("tools.png"),
@@ -166,27 +183,9 @@ fn rankings(b: &Breakdown, charts: &Path) -> Result<String> {
                 .map(|t| (t.name.clone(), t.input.saturating_add(t.result)))
                 .collect::<Vec<_>>(),
         )?;
-        text += "\n![Tools](charts/tools.png)\n";
+        text += "![Tools](charts/tools.png)\n\n";
     }
-    text += "\n## Commands and tool calls\n\n";
-    if b.calls.is_empty() {
-        text += "No tool calls captured.\n";
-    } else {
-        text += "| Event | Tool | Command / input excerpt | Turn | Input est. | Result est. | Total est. |\n|---|---|---|---|---:|---:|---:|\n";
-        for call in b.calls.iter().take(10) {
-            text += &format!(
-                "| E{} | {} | {} | {} | {} | {} | {} |\n",
-                call.event,
-                label(&call.tool),
-                label(&call.summary),
-                call.turn,
-                amount(call.input),
-                amount(call.result),
-                call.total()
-            );
-        }
-    }
-    text += "\n## Conversation turns\n\n| Turn | Prompt excerpt | Tool calls | Content est. | Share |\n|---|---|---:|---:|---:|\n";
+    text += "### Conversation turns\n\n| Turn | Prompt excerpt | Tool calls | Content est. | Share |\n|---|---|---:|---:|---:|\n";
     for turn in b.turns.iter().take(10) {
         text += &format!(
             "| {} | {} | {} | {} | {} |\n",
@@ -197,12 +196,8 @@ fn rankings(b: &Breakdown, charts: &Path) -> Result<String> {
             share(turn.tokens, b.total)
         );
     }
+    text += "\n</details>\n";
     Ok(text)
-}
-fn amount(value: Option<usize>) -> String {
-    value
-        .map(|n| n.to_string())
-        .unwrap_or_else(|| "Unknown".into())
 }
 fn remove_chart(charts: &Path, name: &str) -> Result<()> {
     for extension in ["png", "inputs.json"] {

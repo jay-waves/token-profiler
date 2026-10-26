@@ -8,7 +8,7 @@ see where visible content enters the conversation.
 
 - **Usage overview:** input, output, cached input, and cache hit ratio when available.
 - **Useful rankings:** tools, commands, and conversation turns ranked by observed content size.
-- **Focused report:** an overview, three top-10 rankings, and one tool chart.
+- **Focused report:** usage overview, command groups, and expensive calls; tool charts and turns fold into detailed statistics.
 - **Local reports:** readable Markdown, static charts, and JSON for further analysis.
 
 Runs as a native binary. No server, API key, or extra runtime to configure.
@@ -58,7 +58,9 @@ Stopping freezes the capture. To start another capture after stopping, use a new
 Open `token-profile/latest/report.md` for the most recently updated report. The `latest` symlink points to its session directory under `.token-profiler/`. Its charts are in the adjacent `charts/` directory,
 and `data.json` contains the exported measurements. Keep the charts alongside the Markdown when sharing it.
 
-The overview shows runtime usage and collection health. Start with the tool, command, and conversation rankings to see which operations introduced the most content. Command inputs and results are shown separately, with prompt excerpts linking them to your conversation. Older captures may lack excerpts.
+The overview shows runtime usage and collection health. Command groups rank estimated input and result tokens by executable combination. The ten most expensive calls show command excerpts, conversation turns, and total estimates. Expand Detailed statistics for the tool chart and conversation rankings. Full measurements remain in data.json. Older captures may lack excerpts.
+
+Command groups use sorted, distinct executable names: `rg foo | head` and `head file && rg foo` both belong to `head & rg`; repeated `cat` commands belong to `cat`. Arguments do not affect grouping. Each call contributes its input and result estimates to one group only. Names remain literal (`python3` and `python` are separate). Calls without command excerpts fall back to their tool name. Grouping uses the saved excerpts, so truncated commands and complex shell scripts may be incomplete.
 
 The report separates runtime counters from visible-content estimates.
 **Content estimates are approximate and do not add up to billed usage.**

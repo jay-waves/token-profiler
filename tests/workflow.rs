@@ -548,7 +548,7 @@ fn event_ids_survive_duplicates_and_unchanged_charts_are_reused() {
     assert_ne!(fs::metadata(&chart).unwrap().modified().unwrap(), old);
     assert_eq!(w.data()["events"][0]["id"], first["id"]);
     let md = fs::read_to_string(w.dir().join("report.md")).unwrap();
-    assert!(md.contains("| Event | Tool |"));
+    assert!(md.contains("| Command / input excerpt | Turn | Total est. |"));
     assert!(!md.contains("| system_prompt | Unknown |"));
     let state: Value =
         serde_json::from_slice(&fs::read(w.dir().join("state.json")).unwrap()).unwrap();
@@ -641,6 +641,29 @@ fn rankings_pair_calls_and_explain_tools_commands_and_turns() {
     assert_eq!(b["tools"][0]["calls"], 2);
     assert_eq!(b["tools"][0]["result"], 4000);
     assert_eq!(b["calls"].as_array().unwrap().len(), 3);
+    let groups = b["categories"].as_array().unwrap();
+    assert_eq!(groups.len(), 3);
+    for name in ["cargo", "head & rg", "rg"] {
+        let group = groups.iter().find(|g| g["name"] == name).unwrap();
+        assert_eq!(group["calls"], 1);
+    }
+    let grouped_input: u64 = groups.iter().map(|g| g["input"].as_u64().unwrap()).sum();
+    let grouped_result: u64 = groups.iter().map(|g| g["result"].as_u64().unwrap()).sum();
+    let calls = b["calls"].as_array().unwrap();
+    assert_eq!(
+        grouped_input,
+        calls
+            .iter()
+            .map(|c| c["input"].as_u64().unwrap())
+            .sum::<u64>()
+    );
+    assert_eq!(
+        grouped_result,
+        calls
+            .iter()
+            .map(|c| c["result"].as_u64().unwrap())
+            .sum::<u64>()
+    );
     assert_eq!(b["calls"][0]["summary"], "cargo test --locked");
     assert_eq!(b["calls"][0]["result"], 3000);
     let input = json!({"command":"cargo test --locked"})
@@ -658,7 +681,8 @@ fn rankings_pair_calls_and_explain_tools_commands_and_turns() {
         .sum();
     assert_eq!(b["total"], sum);
     let report = fs::read_to_string(w.dir().join("report.md")).unwrap();
-    assert!(report.contains("**Largest tool:** Search"));
+    assert!(!report.contains("**Largest tool:**"));
+    assert!(report.contains("head &amp; rg"));
     assert!(report.contains("cargo test --locked"));
     assert!(report.contains("rg parser &#124; head"));
     assert!(report.contains("Inspect the parser"));
@@ -735,12 +759,19 @@ fn compact_report_has_only_useful_sections_and_retires_old_charts() {
         sections,
         [
             "## Overview",
-            "## Tools",
-            "## Commands and tool calls",
-            "## Conversation turns"
+            "## Command groups",
+            "## Most expensive calls"
         ]
     );
     assert_eq!(report.matches("![").count(), 1);
+    let (main, details) = report.split_once("<details>").unwrap();
+    assert!(!main.contains("![Tools]"));
+    assert!(!main.contains("### Conversation turns"));
+    assert!(details.contains("![Tools]"));
+    assert!(details.contains("### Conversation turns"));
+    assert!(!report.contains("| Event |"));
+    assert!(!report.contains("| Tool | Calls |"));
+    assert!(report.contains("| Command / input excerpt | Turn | Total est. |"));
     assert!(report.contains("rg parser src"));
     assert!(report.contains("Inspect the parser"));
     assert!(!report.contains("HOT"));

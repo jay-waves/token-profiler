@@ -12,6 +12,7 @@ pub(crate) struct Call {
     pub call: String,
     pub tool: String,
     pub summary: String,
+    pub category: String,
     pub input: Option<usize>,
     pub result: Option<usize>,
 }
@@ -37,9 +38,17 @@ pub(crate) struct Turn {
     pub calls: usize,
     pub tokens: usize,
 }
+#[derive(Default, Serialize)]
+pub(crate) struct Category {
+    pub name: String,
+    pub calls: usize,
+    pub input: usize,
+    pub result: usize,
+}
 #[derive(Serialize)]
 pub(crate) struct Breakdown {
     pub tools: Vec<Tool>,
+    pub categories: Vec<Category>,
     pub calls: Vec<Call>,
     pub turns: Vec<Turn>,
     pub total: usize,
@@ -118,6 +127,7 @@ impl Breakdown {
             if let Some(summary) = &e.summary {
                 call.summary = summary.clone();
             }
+            call.category = classify(&call.tool, &call.summary);
             if source == "tool_input" {
                 call.input = Some(call.input.unwrap_or(0).saturating_add(tokens));
             } else {
@@ -143,13 +153,156 @@ impl Breakdown {
         tools.sort_by_key(|t| std::cmp::Reverse(t.input.saturating_add(t.result)));
         let mut calls: Vec<_> = calls.into_values().collect();
         calls.sort_by_key(|c| (std::cmp::Reverse(c.total()), c.event));
+        let mut categories = BTreeMap::<String, Category>::new();
+        for call in &calls {
+            let category = categories
+                .entry(call.category.clone())
+                .or_insert_with(|| Category {
+                    name: call.category.clone(),
+                    ..Category::default()
+                });
+            category.calls += 1;
+            category.input = category.input.saturating_add(call.input.unwrap_or(0));
+            category.result = category.result.saturating_add(call.result.unwrap_or(0));
+        }
+        let mut categories: Vec<_> = categories.into_values().collect();
+        categories.sort_by_key(|c| std::cmp::Reverse(c.input.saturating_add(c.result)));
         let mut turns: Vec<_> = turns.into_values().collect();
         turns.sort_by_key(|t| std::cmp::Reverse(t.tokens));
         Self {
             tools,
+            categories,
             calls,
             turns,
             total,
         }
+    }
+}
+
+/// Group each call by its sorted, distinct executable names. Arguments do not
+/// contribute names; shell separators inside quotes and escaped separators are literal.
+fn classify(tool: &str, command: &str) -> String {
+    let mut names = std::collections::BTreeSet::new();
+    let mut word = String::new();
+    let mut words = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut comment = false;
+    let mut chars = command.chars().peekable();
+    while let Some(c) = chars.next() {
+        if comment {
+            if c != '\n' {
+                continue;
+            }
+            comment = false;
+        }
+        if escaped {
+            if c != '\n' {
+                word.push(c);
+            }
+            escaped = false;
+            continue;
+        }
+        if c == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            } else {
+                word.push(c);
+            }
+            continue;
+        }
+        if c == '\'' || c == '"' {
+            quote = Some(c);
+        } else if c == '#' && word.is_empty() {
+            comment = true;
+        } else if matches!(c, '|' | '&' | ';' | '\n' | '(' | ')') {
+            if !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            command_name(&words, &mut names);
+            words.clear();
+        } else if matches!(c, '>' | '<') {
+            // A descriptor duplication such as 2>&1 is not a new command.
+            if word.chars().all(|c| c.is_ascii_digit()) {
+                word.clear();
+            } else if !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            while chars.peek().is_some_and(|c| matches!(c, '>' | '<' | '&')) {
+                chars.next();
+            }
+            // Everything after the executable is already treated as arguments.
+        } else if c.is_whitespace() {
+            if !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+        } else {
+            word.push(c);
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    command_name(&words, &mut names);
+    if names.is_empty() {
+        if command.trim().is_empty() && !tool.is_empty() {
+            tool.into()
+        } else {
+            "Unknown".into()
+        }
+    } else {
+        names.into_iter().collect::<Vec<_>>().join(" & ")
+    }
+}
+
+fn command_name(words: &[String], names: &mut std::collections::BTreeSet<String>) {
+    for word in words {
+        // Assignment prefixes and common shell wrappers are not executables.
+        if word.split_once('=').is_some_and(|(key, _)| {
+            !key.is_empty()
+                && key.chars().enumerate().all(|(i, c)| {
+                    c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit())
+                })
+        }) || matches!(word.as_str(), "sudo" | "env" | "command" | "exec")
+        {
+            continue;
+        }
+        let name = word.rsplit('/').next().unwrap_or(word);
+        if !name.is_empty() {
+            names.insert(name.into());
+        }
+        break;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify;
+
+    #[test]
+    fn command_combinations_are_sorted_and_unique() {
+        for (command, expected) in [
+            ("rg foo src", "rg"),
+            ("head -n 20 file", "head"),
+            ("rg foo src | head", "head & rg"),
+            ("head file && rg foo src", "head & rg"),
+            ("cat a && cat b", "cat"),
+            ("/usr/bin/rg foo; cat file", "cat & rg"),
+            ("rg 'foo|bar; baz' src", "rg"),
+            ("rg \"foo && bar\" src | head", "head & rg"),
+            (r"rg foo\|bar src", "rg"),
+            ("rg foo src # cat ignored\nhead file", "head & rg"),
+            ("LANG=C sudo /usr/bin/rg foo", "rg"),
+            ("cat file 2>&1 | head", "cat & head"),
+            ("python3 script.py", "python3"),
+        ] {
+            assert_eq!(classify("Bash", command), expected, "{command}");
+        }
+        assert_eq!(classify("read_file", ""), "read_file");
+        assert_eq!(classify("", ""), "Unknown");
     }
 }
